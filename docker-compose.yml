@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: edshare-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: edshare
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./server/scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - edshare-network
+
+  # Redis for session storage and caching
+  redis:
+    image: redis:7.2-alpine
+    container_name: edshare-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - edshare-network
+
+  # Backend API Server
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: edshare-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGODB_URI: mongodb://admin:password123@mongodb:27017/edshare?authSource=admin
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your_super_secret_jwt_key_here_make_it_long_and_random
+      JWT_EXPIRE: 7d
+      # Add your API keys here
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      EMAIL_FROM: noreply@edshare.com
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./server/uploads:/app/uploads
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - edshare-network
+
+  # Frontend React App
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: http://localhost:5000/api
+        REACT_APP_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+        REACT_APP_RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
+        REACT_APP_STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
+        REACT_APP_SOCKET_URL: http://localhost:5000
+    container_name: edshare-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - edshare-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: edshare-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./server/uploads:/var/www/uploads:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - edshare-network
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  edshare-network:
+    driver: bridge
