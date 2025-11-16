@@ -1,305 +1,130 @@
-import { argsert } from './argsert.js';
-import { assertNotStrictEqual, } from './typings/common-types.js';
-import { levenshtein as distance } from './utils/levenshtein.js';
-import { objFilter } from './utils/obj-filter.js';
-const specialKeys = ['$0', '--', '_'];
-export function validation(yargs, usage, shim) {
-    const __ = shim.y18n.__;
-    const __n = shim.y18n.__n;
-    const self = {};
-    self.nonOptionCount = function nonOptionCount(argv) {
-        const demandedCommands = yargs.getDemandedCommands();
-        const positionalCount = argv._.length + (argv['--'] ? argv['--'].length : 0);
-        const _s = positionalCount - yargs.getInternalMethods().getContext().commands.length;
-        if (demandedCommands._ &&
-            (_s < demandedCommands._.min || _s > demandedCommands._.max)) {
-            if (_s < demandedCommands._.min) {
-                if (demandedCommands._.minMsg !== undefined) {
-                    usage.fail(demandedCommands._.minMsg
-                        ? demandedCommands._.minMsg
-                            .replace(/\$0/g, _s.toString())
-                            .replace(/\$1/, demandedCommands._.min.toString())
-                        : null);
-                }
-                else {
-                    usage.fail(__n('Not enough non-option arguments: got %s, need at least %s', 'Not enough non-option arguments: got %s, need at least %s', _s, _s.toString(), demandedCommands._.min.toString()));
-                }
-            }
-            else if (_s > demandedCommands._.max) {
-                if (demandedCommands._.maxMsg !== undefined) {
-                    usage.fail(demandedCommands._.maxMsg
-                        ? demandedCommands._.maxMsg
-                            .replace(/\$0/g, _s.toString())
-                            .replace(/\$1/, demandedCommands._.max.toString())
-                        : null);
-                }
-                else {
-                    usage.fail(__n('Too many non-option arguments: got %s, maximum of %s', 'Too many non-option arguments: got %s, maximum of %s', _s, _s.toString(), demandedCommands._.max.toString()));
-                }
-            }
-        }
-    };
-    self.positionalCount = function positionalCount(required, observed) {
-        if (observed < required) {
-            usage.fail(__n('Not enough non-option arguments: got %s, need at least %s', 'Not enough non-option arguments: got %s, need at least %s', observed, observed + '', required + ''));
-        }
-    };
-    self.requiredArguments = function requiredArguments(argv, demandedOptions) {
-        let missing = null;
-        for (const key of Object.keys(demandedOptions)) {
-            if (!Object.prototype.hasOwnProperty.call(argv, key) ||
-                typeof argv[key] === 'undefined') {
-                missing = missing || {};
-                missing[key] = demandedOptions[key];
-            }
-        }
-        if (missing) {
-            const customMsgs = [];
-            for (const key of Object.keys(missing)) {
-                const msg = missing[key];
-                if (msg && customMsgs.indexOf(msg) < 0) {
-                    customMsgs.push(msg);
-                }
-            }
-            const customMsg = customMsgs.length ? `\n${customMsgs.join('\n')}` : '';
-            usage.fail(__n('Missing required argument: %s', 'Missing required arguments: %s', Object.keys(missing).length, Object.keys(missing).join(', ') + customMsg));
-        }
-    };
-    self.unknownArguments = function unknownArguments(argv, aliases, positionalMap, isDefaultCommand, checkPositionals = true) {
-        var _a;
-        const commandKeys = yargs
-            .getInternalMethods()
-            .getCommandInstance()
-            .getCommands();
-        const unknown = [];
-        const currentContext = yargs.getInternalMethods().getContext();
-        Object.keys(argv).forEach(key => {
-            if (!specialKeys.includes(key) &&
-                !Object.prototype.hasOwnProperty.call(positionalMap, key) &&
-                !Object.prototype.hasOwnProperty.call(yargs.getInternalMethods().getParseContext(), key) &&
-                !self.isValidAndSomeAliasIsNotNew(key, aliases)) {
-                unknown.push(key);
-            }
-        });
-        if (checkPositionals &&
-            (currentContext.commands.length > 0 ||
-                commandKeys.length > 0 ||
-                isDefaultCommand)) {
-            argv._.slice(currentContext.commands.length).forEach(key => {
-                if (!commandKeys.includes('' + key)) {
-                    unknown.push('' + key);
-                }
-            });
-        }
-        if (checkPositionals) {
-            const demandedCommands = yargs.getDemandedCommands();
-            const maxNonOptDemanded = ((_a = demandedCommands._) === null || _a === void 0 ? void 0 : _a.max) || 0;
-            const expected = currentContext.commands.length + maxNonOptDemanded;
-            if (expected < argv._.length) {
-                argv._.slice(expected).forEach(key => {
-                    key = String(key);
-                    if (!currentContext.commands.includes(key) &&
-                        !unknown.includes(key)) {
-                        unknown.push(key);
-                    }
-                });
-            }
-        }
-        if (unknown.length) {
-            usage.fail(__n('Unknown argument: %s', 'Unknown arguments: %s', unknown.length, unknown.map(s => (s.trim() ? s : `"${s}"`)).join(', ')));
-        }
-    };
-    self.unknownCommands = function unknownCommands(argv) {
-        const commandKeys = yargs
-            .getInternalMethods()
-            .getCommandInstance()
-            .getCommands();
-        const unknown = [];
-        const currentContext = yargs.getInternalMethods().getContext();
-        if (currentContext.commands.length > 0 || commandKeys.length > 0) {
-            argv._.slice(currentContext.commands.length).forEach(key => {
-                if (!commandKeys.includes('' + key)) {
-                    unknown.push('' + key);
-                }
-            });
-        }
-        if (unknown.length > 0) {
-            usage.fail(__n('Unknown command: %s', 'Unknown commands: %s', unknown.length, unknown.join(', ')));
-            return true;
-        }
-        else {
-            return false;
-        }
-    };
-    self.isValidAndSomeAliasIsNotNew = function isValidAndSomeAliasIsNotNew(key, aliases) {
-        if (!Object.prototype.hasOwnProperty.call(aliases, key)) {
-            return false;
-        }
-        const newAliases = yargs.parsed.newAliases;
-        return [key, ...aliases[key]].some(a => !Object.prototype.hasOwnProperty.call(newAliases, a) || !newAliases[key]);
-    };
-    self.limitedChoices = function limitedChoices(argv) {
-        const options = yargs.getOptions();
-        const invalid = {};
-        if (!Object.keys(options.choices).length)
-            return;
-        Object.keys(argv).forEach(key => {
-            if (specialKeys.indexOf(key) === -1 &&
-                Object.prototype.hasOwnProperty.call(options.choices, key)) {
-                [].concat(argv[key]).forEach(value => {
-                    if (options.choices[key].indexOf(value) === -1 &&
-                        value !== undefined) {
-                        invalid[key] = (invalid[key] || []).concat(value);
-                    }
-                });
-            }
-        });
-        const invalidKeys = Object.keys(invalid);
-        if (!invalidKeys.length)
-            return;
-        let msg = __('Invalid values:');
-        invalidKeys.forEach(key => {
-            msg += `\n  ${__('Argument: %s, Given: %s, Choices: %s', key, usage.stringifiedValues(invalid[key]), usage.stringifiedValues(options.choices[key]))}`;
-        });
-        usage.fail(msg);
-    };
-    let implied = {};
-    self.implies = function implies(key, value) {
-        argsert('<string|object> [array|number|string]', [key, value], arguments.length);
-        if (typeof key === 'object') {
-            Object.keys(key).forEach(k => {
-                self.implies(k, key[k]);
-            });
-        }
-        else {
-            yargs.global(key);
-            if (!implied[key]) {
-                implied[key] = [];
-            }
-            if (Array.isArray(value)) {
-                value.forEach(i => self.implies(key, i));
-            }
-            else {
-                assertNotStrictEqual(value, undefined, shim);
-                implied[key].push(value);
-            }
-        }
-    };
-    self.getImplied = function getImplied() {
-        return implied;
-    };
-    function keyExists(argv, val) {
-        const num = Number(val);
-        val = isNaN(num) ? val : num;
-        if (typeof val === 'number') {
-            val = argv._.length >= val;
-        }
-        else if (val.match(/^--no-.+/)) {
-            val = val.match(/^--no-(.+)/)[1];
-            val = !Object.prototype.hasOwnProperty.call(argv, val);
-        }
-        else {
-            val = Object.prototype.hasOwnProperty.call(argv, val);
-        }
-        return val;
+'use strict';
+
+const { isUtf8 } = require('buffer');
+
+//
+// Allowed token characters:
+//
+// '!', '#', '$', '%', '&', ''', '*', '+', '-',
+// '.', 0-9, A-Z, '^', '_', '`', a-z, '|', '~'
+//
+// tokenChars[32] === 0 // ' '
+// tokenChars[33] === 1 // '!'
+// tokenChars[34] === 0 // '"'
+// ...
+//
+// prettier-ignore
+const tokenChars = [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0 - 15
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16 - 31
+  0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, // 32 - 47
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, // 48 - 63
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 64 - 79
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, // 80 - 95
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 96 - 111
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0 // 112 - 127
+];
+
+/**
+ * Checks if a status code is allowed in a close frame.
+ *
+ * @param {Number} code The status code
+ * @return {Boolean} `true` if the status code is valid, else `false`
+ * @public
+ */
+function isValidStatusCode(code) {
+  return (
+    (code >= 1000 &&
+      code <= 1014 &&
+      code !== 1004 &&
+      code !== 1005 &&
+      code !== 1006) ||
+    (code >= 3000 && code <= 4999)
+  );
+}
+
+/**
+ * Checks if a given buffer contains only correct UTF-8.
+ * Ported from https://www.cl.cam.ac.uk/%7Emgk25/ucs/utf8_check.c by
+ * Markus Kuhn.
+ *
+ * @param {Buffer} buf The buffer to check
+ * @return {Boolean} `true` if `buf` contains only correct UTF-8, else `false`
+ * @public
+ */
+function _isValidUTF8(buf) {
+  const len = buf.length;
+  let i = 0;
+
+  while (i < len) {
+    if ((buf[i] & 0x80) === 0) {
+      // 0xxxxxxx
+      i++;
+    } else if ((buf[i] & 0xe0) === 0xc0) {
+      // 110xxxxx 10xxxxxx
+      if (
+        i + 1 === len ||
+        (buf[i + 1] & 0xc0) !== 0x80 ||
+        (buf[i] & 0xfe) === 0xc0 // Overlong
+      ) {
+        return false;
+      }
+
+      i += 2;
+    } else if ((buf[i] & 0xf0) === 0xe0) {
+      // 1110xxxx 10xxxxxx 10xxxxxx
+      if (
+        i + 2 >= len ||
+        (buf[i + 1] & 0xc0) !== 0x80 ||
+        (buf[i + 2] & 0xc0) !== 0x80 ||
+        (buf[i] === 0xe0 && (buf[i + 1] & 0xe0) === 0x80) || // Overlong
+        (buf[i] === 0xed && (buf[i + 1] & 0xe0) === 0xa0) // Surrogate (U+D800 - U+DFFF)
+      ) {
+        return false;
+      }
+
+      i += 3;
+    } else if ((buf[i] & 0xf8) === 0xf0) {
+      // 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+      if (
+        i + 3 >= len ||
+        (buf[i + 1] & 0xc0) !== 0x80 ||
+        (buf[i + 2] & 0xc0) !== 0x80 ||
+        (buf[i + 3] & 0xc0) !== 0x80 ||
+        (buf[i] === 0xf0 && (buf[i + 1] & 0xf0) === 0x80) || // Overlong
+        (buf[i] === 0xf4 && buf[i + 1] > 0x8f) ||
+        buf[i] > 0xf4 // > U+10FFFF
+      ) {
+        return false;
+      }
+
+      i += 4;
+    } else {
+      return false;
     }
-    self.implications = function implications(argv) {
-        const implyFail = [];
-        Object.keys(implied).forEach(key => {
-            const origKey = key;
-            (implied[key] || []).forEach(value => {
-                let key = origKey;
-                const origValue = value;
-                key = keyExists(argv, key);
-                value = keyExists(argv, value);
-                if (key && !value) {
-                    implyFail.push(` ${origKey} -> ${origValue}`);
-                }
-            });
-        });
-        if (implyFail.length) {
-            let msg = `${__('Implications failed:')}\n`;
-            implyFail.forEach(value => {
-                msg += value;
-            });
-            usage.fail(msg);
-        }
+  }
+
+  return true;
+}
+
+module.exports = {
+  isValidStatusCode,
+  isValidUTF8: _isValidUTF8,
+  tokenChars
+};
+
+if (isUtf8) {
+  module.exports.isValidUTF8 = function (buf) {
+    return buf.length < 24 ? _isValidUTF8(buf) : isUtf8(buf);
+  };
+} /* istanbul ignore else  */ else if (!process.env.WS_NO_UTF_8_VALIDATE) {
+  try {
+    const isValidUTF8 = require('utf-8-validate');
+
+    module.exports.isValidUTF8 = function (buf) {
+      return buf.length < 32 ? _isValidUTF8(buf) : isValidUTF8(buf);
     };
-    let conflicting = {};
-    self.conflicts = function conflicts(key, value) {
-        argsert('<string|object> [array|string]', [key, value], arguments.length);
-        if (typeof key === 'object') {
-            Object.keys(key).forEach(k => {
-                self.conflicts(k, key[k]);
-            });
-        }
-        else {
-            yargs.global(key);
-            if (!conflicting[key]) {
-                conflicting[key] = [];
-            }
-            if (Array.isArray(value)) {
-                value.forEach(i => self.conflicts(key, i));
-            }
-            else {
-                conflicting[key].push(value);
-            }
-        }
-    };
-    self.getConflicting = () => conflicting;
-    self.conflicting = function conflictingFn(argv) {
-        Object.keys(argv).forEach(key => {
-            if (conflicting[key]) {
-                conflicting[key].forEach(value => {
-                    if (value && argv[key] !== undefined && argv[value] !== undefined) {
-                        usage.fail(__('Arguments %s and %s are mutually exclusive', key, value));
-                    }
-                });
-            }
-        });
-        if (yargs.getInternalMethods().getParserConfiguration()['strip-dashed']) {
-            Object.keys(conflicting).forEach(key => {
-                conflicting[key].forEach(value => {
-                    if (value &&
-                        argv[shim.Parser.camelCase(key)] !== undefined &&
-                        argv[shim.Parser.camelCase(value)] !== undefined) {
-                        usage.fail(__('Arguments %s and %s are mutually exclusive', key, value));
-                    }
-                });
-            });
-        }
-    };
-    self.recommendCommands = function recommendCommands(cmd, potentialCommands) {
-        const threshold = 3;
-        potentialCommands = potentialCommands.sort((a, b) => b.length - a.length);
-        let recommended = null;
-        let bestDistance = Infinity;
-        for (let i = 0, candidate; (candidate = potentialCommands[i]) !== undefined; i++) {
-            const d = distance(cmd, candidate);
-            if (d <= threshold && d < bestDistance) {
-                bestDistance = d;
-                recommended = candidate;
-            }
-        }
-        if (recommended)
-            usage.fail(__('Did you mean %s?', recommended));
-    };
-    self.reset = function reset(localLookup) {
-        implied = objFilter(implied, k => !localLookup[k]);
-        conflicting = objFilter(conflicting, k => !localLookup[k]);
-        return self;
-    };
-    const frozens = [];
-    self.freeze = function freeze() {
-        frozens.push({
-            implied,
-            conflicting,
-        });
-    };
-    self.unfreeze = function unfreeze() {
-        const frozen = frozens.pop();
-        assertNotStrictEqual(frozen, undefined, shim);
-        ({ implied, conflicting } = frozen);
-    };
-    return self;
+  } catch (e) {
+    // Continue regardless of the error.
+  }
 }
